@@ -785,10 +785,7 @@ function ModelPerformanceMetricsTable(props) {
   const [subset, setSubset] = usePanelStatePartial(`${id}_mpts`, subsets[0]);
   const { key, compareKey } = data?.view;
   const width = getWidth(props);
-  const inapplicable = getInapplicableMetrics(props.evaluation);
-  const metrics = MODEL_PERFORMANCE_METRICS.filter(
-    (metric) => !inapplicable.includes(metric.key),
-  );
+  const metrics = getModelPerformanceMetrics(props);
 
   return (
     <Stack>
@@ -809,7 +806,7 @@ function ModelPerformanceMetricsTable(props) {
             {compareKey && <TableCell sx={{ width }}>Difference</TableCell>}
           </TableRow>
         </TableHead>
-        {metrics.map(({ label, key }) => {
+        {metrics.map(({ label, key, lesserIsBetter }) => {
           const subsetData = subsets_data[subset];
           const compareSubsetData = compareSubsetsData?.[subset];
           const { metrics } = subsetData;
@@ -825,6 +822,7 @@ function ModelPerformanceMetricsTable(props) {
                     value={value}
                     compareValue={compareMetrics?.[key]}
                     mode="trophy"
+                    lesserIsBetter={lesserIsBetter}
                   />
                 </Stack>
               </TableCell>
@@ -839,6 +837,7 @@ function ModelPerformanceMetricsTable(props) {
                         value={compareMetrics[key]}
                         compareValue={value}
                         mode="trophy"
+                        lesserIsBetter={lesserIsBetter}
                       />
                     </Stack>
                   ) : (
@@ -854,6 +853,7 @@ function ModelPerformanceMetricsTable(props) {
                       compareValue={compareMetrics[key]}
                       mode={differenceMode}
                       arrow
+                      lesserIsBetter={lesserIsBetter}
                     />
                   ) : (
                     <CircularProgress size={16} />
@@ -1065,6 +1065,41 @@ const MODEL_PERFORMANCE_METRICS = [
   { label: "Recall", key: "recall" },
   { label: "IoU", key: "iou" },
 ];
+
+const EXTRA_MODEL_PERFORMANCE_METRICS = [
+  { label: "ASE", key: "ase", lesserIsBetter: true },
+  { label: "AOE (rad)", key: "aoe", lesserIsBetter: true },
+];
+
+function hasScenarioMetric(scenario, key) {
+  const subsets = scenario?.subsets || [];
+  const subsetsData = scenario?.subsets_data || {};
+
+  return subsets.some((subset) => {
+    return !isNullish(subsetsData?.[subset]?.metrics?.[key]);
+  });
+}
+
+function getModelPerformanceMetrics(props) {
+  const inapplicable = getInapplicableMetrics(props.evaluation);
+  const metrics = MODEL_PERFORMANCE_METRICS.filter(
+    (metric) => !inapplicable.includes(metric.key),
+  );
+  const metricKeys = new Set(metrics.map(({ key }) => key));
+
+  for (const metric of EXTRA_MODEL_PERFORMANCE_METRICS) {
+    if (
+      !metricKeys.has(metric.key) &&
+      (hasScenarioMetric(props.scenario, metric.key) ||
+        hasScenarioMetric(props.compareScenario, metric.key))
+    ) {
+      metrics.push(metric);
+      metricKeys.add(metric.key);
+    }
+  }
+
+  return metrics;
+}
 
 function PredictionStatisticsChart(props) {
   const { scenario, compareScenario, loadView, trackEvent } = props;
@@ -1288,10 +1323,7 @@ function ScenarioModelPerformanceChart(props) {
   const { metrics } = subsetData;
   const compareMetrics = compareSubsetData?.metrics;
   const { key, compareKey } = props.data?.view;
-  const inapplicable = getInapplicableMetrics(props.evaluation);
-  const metricFields = MODEL_PERFORMANCE_METRICS.filter(
-    (metric) => !inapplicable.includes(metric.key),
-  );
+  const metricFields = getModelPerformanceMetrics(props);
 
   const theta = [];
   const r = [];
@@ -1694,10 +1726,7 @@ function MetricPerformanceChart(props) {
   const { scenario, compareScenario, loadView, trackEvent } = props;
   const { subsets, subsets_data } = scenario;
   const compareSubsetsData = compareScenario?.subsets_data;
-  const inapplicable = getInapplicableMetrics(props.evaluation);
-  const metrics = MODEL_PERFORMANCE_METRICS.filter((metric) => {
-    return !inapplicable.includes(metric.key);
-  });
+  const metrics = getModelPerformanceMetrics(props);
   const [metric, setMetric] = usePanelStatePartial("mp_mode", metrics[0].key);
   const { key, compareKey } = props.data?.view || {};
 

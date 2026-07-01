@@ -51,7 +51,7 @@ ENABLE_CACHING = (
     os.environ.get("FIFTYONE_DISABLE_EVALUATION_CACHING") not in TRUTHY_VALUES
 )
 CACHE_TTL = 30 * 24 * 60 * 60  # 30 days in seconds
-CACHE_VERSION = "v3.0.1"
+CACHE_VERSION = "v3.0.2"
 SUPPORTED_EVALUATION_TYPES = ["classification", "detection", "segmentation"]
 
 
@@ -186,6 +186,87 @@ class EvaluationPanel(Panel):
                 count += 1
                 total += metrics["iou"]
         return total / count if count > 0 else None
+
+    def get_scale_orientation_errors(self, results):
+        if (
+            not hasattr(results, "ytrue_ids")
+            or not hasattr(results, "ypred_ids")
+            or results.ytrue_ids is None
+            or results.ypred_ids is None
+            or not hasattr(results.config, "gt_field")
+            or not hasattr(results.config, "pred_field")
+        ):
+            return None, None
+
+        gt_by_id = {}
+        pred_by_id = {}
+        fields = (results.config.gt_field, results.config.pred_field)
+
+        for sample in results.samples.select_fields(fields):
+            for field, index in (
+                (results.config.gt_field, gt_by_id),
+                (results.config.pred_field, pred_by_id),
+            ):
+                labels = sample[field]
+                detections = getattr(labels, "detections", None)
+                if not detections:
+                    continue
+
+                for detection in detections:
+                    index[str(detection.id)] = detection
+
+        scale_errors = []
+        orientation_errors = []
+        for gt_id, pred_id in zip(results.ytrue_ids, results.ypred_ids):
+            gt = gt_by_id.get(str(gt_id))
+            pred = pred_by_id.get(str(pred_id))
+            if gt is None or pred is None:
+                continue
+
+            scale_error = self.compute_scale_error(gt, pred)
+            orientation_error = self.compute_orientation_error(gt, pred)
+            if scale_error is not None:
+                scale_errors.append(scale_error)
+            if orientation_error is not None:
+                orientation_errors.append(orientation_error)
+
+        return self.safe_mean(scale_errors), self.safe_mean(orientation_errors)
+
+    def compute_scale_error(self, gt, pred):
+        gt_dims = getattr(gt, "dimensions", None)
+        pred_dims = getattr(pred, "dimensions", None)
+        if gt_dims is None or pred_dims is None:
+            return None
+
+        gt_dims = np.asarray(gt_dims, dtype=float)
+        pred_dims = np.asarray(pred_dims, dtype=float)
+        if np.any(gt_dims <= 0) or np.any(pred_dims <= 0):
+            return None
+
+        intersection = np.prod(np.minimum(gt_dims, pred_dims))
+        union = np.prod(gt_dims) + np.prod(pred_dims) - intersection
+        if union <= 0:
+            return None
+
+        return float(1.0 - intersection / union)
+
+    def compute_orientation_error(self, gt, pred):
+        gt_rotation = getattr(gt, "rotation", None)
+        pred_rotation = getattr(pred, "rotation", None)
+        if gt_rotation is None or pred_rotation is None:
+            return None
+        if len(gt_rotation) < 3 or len(pred_rotation) < 3:
+            return None
+
+        delta = (gt_rotation[2] - pred_rotation[2] + np.pi) % (2 * np.pi)
+        delta -= np.pi
+        return float(abs(delta))
+
+    def safe_mean(self, values):
+        if not values:
+            return None
+
+        return float(np.mean(values))
 
     def get_tp_fp_fn(self, info, results):
         # Binary classification
@@ -873,6 +954,9 @@ class EvaluationPanel(Panel):
             metrics["mAP"] = self.get_map(results)
             metrics["mAR"] = self.get_mar(results)
             metrics["iou"] = self.get_avg_iou(per_class_metrics)
+            metrics["ase"], metrics["aoe"] = (
+                self.get_scale_orientation_errors(results)
+            )
             evaluation_type = self.get_evaluation_type(info.config)
             if evaluation_type == "multiclass_classification":
                 (
