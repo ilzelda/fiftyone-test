@@ -7,7 +7,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Cache
         id: node-cache
         uses: actions/cache@v4
@@ -48,7 +48,7 @@ jobs:
         shell: bash
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Setup
         uses: actions/setup-python@v5
         id: pip-cache
